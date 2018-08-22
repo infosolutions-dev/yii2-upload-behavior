@@ -6,6 +6,9 @@
  */
 namespace yiidreamteam\upload;
 
+use Imagine\Image\Box;
+use Imagine\Image\ManipulatorInterface;
+use PHPThumb\GD;
 use Yii;
 use yii\base\InvalidCallException;
 use yii\base\Model;
@@ -14,6 +17,7 @@ use yii\db\BaseActiveRecord;
 use yii\helpers\ArrayHelper;
 use yii\helpers\FileHelper;
 use yii\helpers\VarDumper;
+use yii\imagine\Image;
 use yii\web\UploadedFile;
 use yiidreamteam\upload\exceptions\FileUploadException;
 
@@ -28,6 +32,7 @@ class FileUploadBehavior extends \yii\base\Behavior
 
     /** @var string Name of attribute which holds the attachment. */
     public $attribute = 'upload';
+    public $attributeExtension = 'extension';
 
     /** @var string Path template to use in storing files.5 */
     public $filePath = '@webroot/uploads/[[pk]].[[extension]]';
@@ -43,6 +48,18 @@ class FileUploadBehavior extends \yii\base\Behavior
 
     /** @var \yii\web\UploadedFile */
     protected $file;
+
+
+    public $createThumbsOnSave = true;
+    public $createThumbsOnRequest = false;
+
+    /** @var array Thumbnail profiles, array of [width, height, ... PHPThumb options] */
+    public $thumbs = [];
+
+    /** @var string Path template for thumbnails. Please use the [[profile]] placeholder. */
+    public $thumbPath = '@webroot/images/[[profile]]_[[pk]].[[extension]]';
+    /** @var string Url template for thumbnails. */
+    public $thumbUrl = '/images/[[profile]]_[[pk]].[[extension]]';
 
     /**
      * @inheritdoc
@@ -81,6 +98,77 @@ class FileUploadBehavior extends \yii\base\Behavior
     }
 
     /**
+     * @param string $attribute
+     * @param string $profile
+     * @return string
+     */
+    public function getThumbFilePath($attribute, $profile = 'thumb')
+    {
+        $behavior = static::getInstance($this->owner, $attribute);
+        return $behavior->resolveProfilePath($behavior->thumbPath, $profile);
+    }
+
+    /**
+     * @param string $attribute
+     * @param string $profile
+     * @param string|null $emptyUrl
+     * @return string|null
+     * @throws \yii\base\Exception
+     */
+    public function getThumbFileUrl($attribute, $profile = 'thumb', $emptyUrl = null)
+    {
+        if (!$this->owner->{$attribute}) {
+            return $emptyUrl;
+        }
+
+        $behavior = static::getInstance($this->owner, $attribute);
+
+        if ($behavior->createThumbsOnRequest) {
+            $behavior->createThumbs();
+        }
+
+        return $behavior->resolveProfilePath($behavior->thumbUrl, $profile);
+    }
+
+    /**
+     * Creates image thumbnails
+     * @throws \yii\base\Exception
+     */
+    public function createThumbs()
+    {
+        $path = $this->getUploadedFilePath($this->attribute);
+        foreach ($this->thumbs as $profile => $config) {
+            $thumbPath = static::getThumbFilePath($this->attribute, $profile);
+            if (is_file($path) && !is_file($thumbPath)) {
+
+                FileHelper::createDirectory(pathinfo($thumbPath, PATHINFO_DIRNAME), 0775, true);
+                Image::getImagine()->open($path)->thumbnail(new Box($config['width'], $config['height']), ManipulatorInterface::THUMBNAIL_OUTBOUND)->save($thumbPath , ['quality' => 100]);
+
+            }
+        }
+    }
+
+    /**
+     * Resolves profile path for thumbnail profile.
+     *
+     * @param string $path
+     * @param string $profile
+     * @return string
+     */
+    public function resolveProfilePath($path, $profile)
+    {
+        $path = $this->resolvePath($path);
+        return preg_replace_callback('|\[\[([\w\_/]+)\]\]|', function ($matches) use ($profile) {
+            $name = $matches[1];
+            switch ($name) {
+                case 'profile':
+                    return $profile;
+            }
+            return '[[' . $name . ']]';
+        }, $path);
+    }
+
+    /**
      * Before save event.
      *
      * @throws \yii\base\InvalidConfigException
@@ -96,6 +184,7 @@ class FileUploadBehavior extends \yii\base\Behavior
                 $behavior->cleanFiles();
             }
 
+
             $this->owner->{$this->attribute} = implode('.',
                 array_filter([$this->file->baseName, $this->file->extension])
             );
@@ -105,6 +194,8 @@ class FileUploadBehavior extends \yii\base\Behavior
                     null);
             }
         }
+
+        $this->owner->{$this->attributeExtension} = $this->file->extension;
     }
 
     /**
@@ -132,6 +223,9 @@ class FileUploadBehavior extends \yii\base\Behavior
     {
         $path = $this->resolvePath($this->filePath);
         @unlink($path);
+        foreach (array_keys($this->thumbs) as $profile) {
+            @unlink($this->getThumbFilePath($this->attribute, $profile));
+        }
     }
 
     /**
@@ -209,6 +303,8 @@ class FileUploadBehavior extends \yii\base\Behavior
 
     /**
      * After save event.
+     * @throws \yii\base\Exception
+     * @throws FileUploadException
      */
     public function afterSave()
     {
@@ -216,12 +312,21 @@ class FileUploadBehavior extends \yii\base\Behavior
             return;
         }
 
-        $path = $this->getUploadedFilePath($this->attribute);
+        $extension = $this->file->extension;
 
+        $path = $this->getUploadedFilePath($this->attribute);
         FileHelper::createDirectory(pathinfo($path, PATHINFO_DIRNAME), 0775, true);
 
         if (!$this->file->saveAs($path)) {
             throw new FileUploadException($this->file->error, 'File saving error.');
+        }
+
+        if(in_array($extension, ['jpg', 'png', 'gif', 'jpeg'])){
+
+            if ($this->createThumbsOnSave == true) {
+                $this->createThumbs();
+            }
+
         }
 
         $this->owner->trigger(static::EVENT_AFTER_FILE_SAVE);
