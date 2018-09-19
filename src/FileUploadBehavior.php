@@ -83,9 +83,9 @@ class FileUploadBehavior extends \yii\base\Behavior
     {
         if ($this->owner->{$this->attribute} instanceof UploadedFile) {
             $this->file = $this->owner->{$this->attribute};
-            if($this->owner->hasProperty('imagem_base64')){
-                $this->owner->imagem_base64 = file_get_contents($this->file->tempName);
-            }
+//            if($this->owner->hasProperty('imagem_base64')){
+////                $this->owner->imagem_base64 = file_get_contents($this->file->tempName);
+////            }
             $this->owner->extensao = $this->file->extension;
             return;
         }
@@ -98,9 +98,9 @@ class FileUploadBehavior extends \yii\base\Behavior
 
         if ($this->file instanceof UploadedFile) {
             $this->owner->{$this->attribute} = $this->file;
-            if($this->owner->hasProperty('imagem_base64')){
-                $this->owner->imagem_base64 = file_get_contents($this->file->tempName);
-            }
+//            if($this->owner->hasProperty('imagem_base64')){
+//                $this->owner->imagem_base64 = file_get_contents($this->file->tempName);
+//            }
             $this->owner->extensao = $this->file->extension;
         }
     }
@@ -148,10 +148,10 @@ class FileUploadBehavior extends \yii\base\Behavior
         foreach ($this->thumbs as $profile => $config) {
             $thumbPath = static::getThumbFilePath($this->attribute, $profile);
             if (is_file($path) && !is_file($thumbPath)) {
-
                 FileHelper::createDirectory(pathinfo($thumbPath, PATHINFO_DIRNAME), 0775, true);
-                Image::getImagine()->open($path)->thumbnail(new Box($config['width'], $config['height']), ManipulatorInterface::THUMBNAIL_OUTBOUND)->save($thumbPath , ['quality' => 100]);
-
+                Image::getImagine()->open($path)
+                    ->thumbnail(new Box($config['width'], $config['height']), ManipulatorInterface::THUMBNAIL_INSET)
+                    ->save($thumbPath , ['quality' => 100]);
             }
         }
     }
