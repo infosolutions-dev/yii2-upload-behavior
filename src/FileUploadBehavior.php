@@ -83,6 +83,10 @@ class FileUploadBehavior extends \yii\base\Behavior
     {
         if ($this->owner->{$this->attribute} instanceof UploadedFile) {
             $this->file = $this->owner->{$this->attribute};
+            if($this->owner->hasProperty('imagem_base64')){
+                $this->owner->imagem_base64 = file_get_contents($this->file->tempName);
+            }
+            $this->owner->extensao = $this->file->extension;
             return;
         }
 
@@ -94,6 +98,10 @@ class FileUploadBehavior extends \yii\base\Behavior
 
         if ($this->file instanceof UploadedFile) {
             $this->owner->{$this->attribute} = $this->file;
+            if($this->owner->hasProperty('imagem_base64')){
+                $this->owner->imagem_base64 = file_get_contents($this->file->tempName);
+            }
+            $this->owner->extensao = $this->file->extension;
         }
     }
 
