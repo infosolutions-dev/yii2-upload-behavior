@@ -6,6 +6,7 @@
  */
 namespace yiidreamteam\upload;
 
+use common\classes\Utils;
 use Imagine\Image\Box;
 use Imagine\Image\ManipulatorInterface;
 use PHPThumb\GD;
@@ -81,6 +82,7 @@ class FileUploadBehavior extends \yii\base\Behavior
      */
     public function beforeValidate()
     {
+
         if ($this->owner->{$this->attribute} instanceof UploadedFile) {
             $this->file = $this->owner->{$this->attribute};
 //            if($this->owner->hasProperty('imagem_base64')){
@@ -125,17 +127,23 @@ class FileUploadBehavior extends \yii\base\Behavior
      */
     public function getThumbFileUrl($attribute, $profile = 'thumb', $emptyUrl = null)
     {
+
         if (!$this->owner->{$attribute}) {
             return $emptyUrl;
         }
 
-        $behavior = static::getInstance($this->owner, $attribute);
-
-        if ($behavior->createThumbsOnRequest) {
-            $behavior->createThumbs();
-        }
-
-        return $behavior->resolveProfilePath($behavior->thumbUrl, $profile);
+        $encoded_full_url = urlencode($this->owner->{$attribute});
+        $full_thumb_size = env('STATIC_URL').'/unsafe/200x200/'.$encoded_full_url;
+        return $full_thumb_size;
+        //return $this->owner->{$attribute};
+//
+//        $behavior = static::getInstance($this->owner, $attribute);
+//
+//        if ($behavior->createThumbsOnRequest) {
+//            $behavior->createThumbs();
+//        }
+//
+//        return $behavior->resolveProfilePath($behavior->thumbUrl, $profile);
     }
 
     /**
@@ -229,11 +237,28 @@ class FileUploadBehavior extends \yii\base\Behavior
      */
     public function cleanFiles()
     {
-        $path = $this->resolvePath($this->filePath);
-        @unlink($path);
-        foreach (array_keys($this->thumbs) as $profile) {
-            @unlink($this->getThumbFilePath($this->attribute, $profile));
+
+        // Instantiate an Amazon S3 client.
+        $credentials = new \Aws\Credentials\Credentials(env('AWS_ACCESS_KEY'), env('AWS_SECRET_ACCESS_KEY'));
+        $s3 = new \Aws\S3\S3Client([
+            'version' => 'latest',
+            'region'  => env('AWS_REGION'),
+            'credentials' => $credentials
+        ]);
+
+        $url = $this->owner->{$this->attribute};
+
+        $bucket = env('AWS_S3_BUCKET');
+
+        try {
+            $result = $s3->deleteObject([
+                'Bucket' => $bucket, // REQUIRED
+                'Key' => $url, // REQUIRED
+            ]);
+        } catch (\Exception $e) {
+            dump($e->getMessage());
         }
+
     }
 
     /**
@@ -320,21 +345,49 @@ class FileUploadBehavior extends \yii\base\Behavior
             return;
         }
 
-        $extension = $this->file->extension;
-
         $path = $this->getUploadedFilePath($this->attribute);
         FileHelper::createDirectory(pathinfo($path, PATHINFO_DIRNAME), 0775, true);
 
-        if (!$this->file->saveAs($path)) {
-            throw new FileUploadException($this->file->error, 'File saving error.');
+        // Instantiate an Amazon S3 client.
+        $credentials = new \Aws\Credentials\Credentials(env('AWS_ACCESS_KEY'), env('AWS_SECRET_ACCESS_KEY'));
+        $s3 = new \Aws\S3\S3Client([
+            'version' => 'latest',
+            'region'  => env('AWS_REGION'),
+            'credentials' => $credentials
+        ]);
+
+        // Se é imagem publica vai pra pasta correta
+        $folder = 'documents';
+        $acl = 'private';
+        if(in_array($this->owner->tabela,['categoria', 'produto'])) {
+            $folder = 'images';
+            $acl = 'public-read'; // se é imagem publica, entao ACL é public-read
         }
 
-        if(in_array($extension, ['jpg', 'png', 'gif', 'jpeg'])){
+        // Sanitiza e prepara o nome do arquivo pra ser enviado
+        $filename = \common\classes\Utils::filter_filename($this->file->getBaseName()).'_'.Utils::generateRandomString(6);
+        $bucket_filename_path = $folder.'/'.$this->owner->empresa_id.'/'.$filename.'.'.$this->file->getExtension();
 
-            if ($this->createThumbsOnSave == true) {
-                $this->createThumbs();
-            }
+        try {
 
+            dump($bucket_filename_path);
+
+            $result = $s3->putObject([
+                'Bucket' => env('AWS_S3_BUCKET'),
+                'Key'    => $bucket_filename_path,
+                'Body'   => fopen($this->file->tempName, 'r'),
+                'ACL'    => $acl,
+                'ContentType' => mime_content_type($this->file->tempName)
+            ]);
+            //$result['ObjectURL']
+
+            // Atualiza o proprio registro com o retorno da S3
+            $this->owner->updateAttributes([
+                $this->attribute => $bucket_filename_path,
+            ]);
+
+        } catch (\Aws\S3\Exception\S3Exception $e) {
+            dump($e->getMessage());
         }
 
         $this->owner->trigger(static::EVENT_AFTER_FILE_SAVE);
@@ -377,8 +430,6 @@ class FileUploadBehavior extends \yii\base\Behavior
             return null;
         }
 
-        $behavior = static::getInstance($this->owner, $attribute);
-
-        return $behavior->resolvePath($behavior->fileUrl);
+        return $this->owner->{$attribute};
     }
 }
