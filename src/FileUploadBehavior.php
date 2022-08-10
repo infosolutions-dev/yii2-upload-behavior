@@ -359,18 +359,27 @@ class FileUploadBehavior extends \yii\base\Behavior
         // Se é imagem publica vai pra pasta correta
         $folder = 'documents';
         $acl = 'private';
-        if(in_array($this->owner->tabela,['categoria', 'produto'])) {
+        if(in_array($this->owner->tabela, ['categoria', 'produto', 'padrao_imagem'])) {
             $folder = 'images';
             $acl = 'public-read'; // se é imagem publica, entao ACL é public-read
         }
 
         // Sanitiza e prepara o nome do arquivo pra ser enviado
-        $filename = \common\classes\Utils::filter_filename($this->file->getBaseName()).'_'.Utils::generateRandomString(6);
-        $bucket_filename_path = $folder.'/'.$this->owner->empresa_id.'/'.$filename.'.'.$this->file->getExtension();
+        $filename = date('YmdHis') .'_' . \common\classes\Utils::filter_filename($this->file->getBaseName()).'_'.Utils::generateRandomString(4);
+        if(is_null($this->owner->empresa_id)) { // Se nulo por algum motivo ...
+            $bucket_filename_path = $folder.'/'.$filename.'.'.$this->file->getExtension();
+        } else {
+
+            if($this->owner->tabela == 'padrao_imagem') {
+                $bucket_filename_path = $folder.'/padrao/'.$filename.'.'.$this->file->getExtension();
+            } else {
+                $bucket_filename_path = $folder.'/'.$this->owner->empresa_id.'/'.$filename.'.'.$this->file->getExtension();
+            }
+        }
 
         try {
 
-            dump($bucket_filename_path);
+//            dump($bucket_filename_path);
 
             $result = $s3->putObject([
                 'Bucket' => env('AWS_S3_BUCKET'),
@@ -387,7 +396,7 @@ class FileUploadBehavior extends \yii\base\Behavior
             ]);
 
         } catch (\Aws\S3\Exception\S3Exception $e) {
-            dump($e->getMessage());
+//            dump($e->getMessage());
         }
 
         $this->owner->trigger(static::EVENT_AFTER_FILE_SAVE);
